@@ -1,0 +1,14 @@
+App(
+    appid="morse_beacon",
+    name="Morse Beacon",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="morse_beacon_app",
+    stack_size=2 * 1024,
+    fap_category="Sub-GHz",
+    fap_icon="morse_beacon.png",
+    fap_icon_assets="images",
+    fap_author="jdmills",
+    fap_version="0.1",
+    fap_description="Sub-GHz Morse station ID and text beacon",
+    requires=["gui", "storage", "notification"],
+)

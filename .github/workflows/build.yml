@@ -1,0 +1,37 @@
+name: "FAP: build against the Unleashed SDK"
+
+# This app needs the Unleashed/RogueMaster SDK (API 88.4). The official SDK
+# exposes a different API version and a narrower sub-GHz range, so building
+# against it will not produce a loadable FAP for those firmwares.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "1 1 * * *"
+
+jobs:
+  ufbt-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: unleashed release
+            sdk-channel: release
+          - name: unleashed dev
+            sdk-channel: dev
+    name: 'ufbt: ${{ matrix.name }}'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build with ufbt
+        uses: flipperdevices/flipperzero-ufbt-action@v0.1
+        id: build-app
+        with:
+          sdk-channel: ${{ matrix.sdk-channel }}
+          sdk-index-url: https://up.unleashedflip.com/directory.json
+      - name: Upload app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-${{ steps.build-app.outputs.suffix }}
+          path: ${{ steps.build-app.outputs.fap-artifacts }}
