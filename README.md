@@ -317,21 +317,40 @@ point of scheduling against a deadline instead of a countdown. `end-to-start`
 reproduces the 21.8 s cycle measured on air. Build it with
 `gcc -O2 -Wall -Wextra -o sched_test tools/sched_test.c`.
 
-### Not yet verified on device
+**Interval anchoring verified on device, 2026-09-08.** Both anchors measured on
+the same build at a 15 s interval, logging `furi_get_tick()` at each firing:
 
-`Measure from` and the conditional settings list were written after the Flipper
-came off the bench, and have been checked only by building and by the host test
-above. Specifically outstanding:
+| `Measure from` | Gaps between transmission starts |
+|---|---|
+| `Start of TX` | 14996, 14996, 15011, 14984 ms |
+| `End of TX` | 21938, 21911 ms |
 
-- the interval cadence measured on real hardware, either anchor
-- rows appearing and disappearing without a crash as `Mode`, `Trigger` and
-  `Remote` change — the rebuild is deferred through a custom event precisely
-  because doing it inline frees the array the live row sits in, and that path
-  has not been exercised on hardware
-- the cursor landing on the right row after a rebuild
+Start-to-start held 15 s across four periods: 59987 ms elapsed against 60000
+nominal, so **13 ms total error over a minute** — and the per-gap spread of
++-16 ms is the 20 ms poll quantisation, which telescopes away instead of
+accumulating. That is the difference between scheduling against a deadline and
+counting down.
 
-The on-air results above remain valid: they describe behaviour that has not
-changed, and the 22.65 s figure is the `End of TX` path.
+End-to-start reproduced the ~21.9 s cycle, matching the host simulation's
+21.83 s. It is 0.7 s shorter than the 22.65 s originally measured on air because
+the tick-drift fix removed the slop that used to stretch the 15 s portion.
+
+**Conditional settings list verified on device, 2026-09-08.** Row counts logged
+at each rebuild while driving `Mode`, `Trigger` and `Remote` over the CLI:
+
+| Mode / Trigger / Remote | Rows |
+|---|---|
+| MCW, On activity, BLE | 19 |
+| OOK, On activity, BLE | 15 |
+| OOK, Interval, BLE | 14 |
+| OOK, Interval, UART | 15 |
+| MCW, Interval, UART | 19 |
+| MCW, Both, UART | 22 |
+
+Every count matched prediction, the cursor stayed on the row being edited through
+each rebuild, and the app survived all of it — the deferred custom event does
+keep the rebuild clear of the callback that would otherwise free the row it is
+running from.
 
 ### Bugs this shook out
 
