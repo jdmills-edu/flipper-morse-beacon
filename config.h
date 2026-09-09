@@ -4,7 +4,7 @@
 #include "radio.h"
 #include "link.h"
 
-#define MORSE_CONFIG_VERSION 3
+#define MORSE_CONFIG_VERSION 4
 #define MORSE_CONFIG_MAGIC   0x4D // 'M'
 
 typedef enum {
@@ -13,6 +13,19 @@ typedef enum {
     BeaconTriggerBoth,
     BeaconTriggerCount,
 } BeaconTrigger;
+
+typedef enum {
+    /* Measure the interval from the end of one transmission to the start of the
+     * next, so the gap of dead air is what stays constant. The cadence then
+     * includes the length of the identifier and walks with it. */
+    IntervalAnchorEnd,
+    /* Measure start to start: transmissions begin at fixed multiples of the
+     * period, which is what a hunt needs. If the identifier is longer than the
+     * period there is no way to honour that without keying continuously, so
+     * whole slots are skipped and the overrun is logged. */
+    IntervalAnchorStart,
+    IntervalAnchorCount,
+} IntervalAnchor;
 
 typedef struct {
     char id_text[MORSE_MAX_TEXT + 1];
@@ -36,6 +49,7 @@ typedef struct {
     uint16_t hang_ms; // carrier must be gone this long to count as clear
     uint8_t beacon_trigger; // BeaconTrigger
     uint16_t period_s; // interval-mode period
+    uint8_t interval_anchor; // IntervalAnchor - what the period is measured between
     bool id_on_start;
 
     uint8_t link_source; // LinkSource

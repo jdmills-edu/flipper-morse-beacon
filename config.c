@@ -34,6 +34,10 @@ void morse_config_set_defaults(MorseConfig* config) {
     config->hang_ms = 600;
     config->beacon_trigger = BeaconTriggerActivity;
     config->period_s = 600; // 10 min - the Part 97 station ID interval
+    // Start to start by default: a beacon is only useful if its cadence is
+    // predictable, and end-to-end quietly folds the length of every
+    // transmission into the period.
+    config->interval_anchor = IntervalAnchorStart;
     config->id_on_start = false;
 
     config->link_source = LinkSourceBle;
@@ -84,6 +88,9 @@ void morse_config_validate(MorseConfig* config) {
 
     if(config->beacon_trigger >= BeaconTriggerCount) {
         config->beacon_trigger = BeaconTriggerActivity;
+    }
+    if(config->interval_anchor >= IntervalAnchorCount) {
+        config->interval_anchor = IntervalAnchorStart;
     }
     bool period_ok = false;
     static const uint16_t period_allowed[] =

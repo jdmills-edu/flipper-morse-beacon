@@ -7,6 +7,12 @@
 #define TAG            "Beacon"
 #define BEACON_TICK_MS 20
 
+/* Wrap-safe deadline test. furi_get_tick() rolls over about every 50 days;
+ * comparing the signed difference keeps working across the seam. */
+static inline bool tick_reached(uint32_t now, uint32_t target) {
+    return (int32_t)(now - target) >= 0;
+}
+
 struct Beacon {
     CwRadio* radio;
     FuriThread* thread;
@@ -75,10 +81,13 @@ static int32_t beacon_worker(void* context) {
     const bool use_activity = beacon->config.beacon_trigger == BeaconTriggerActivity ||
                               beacon->config.beacon_trigger == BeaconTriggerBoth;
 
+    const bool anchor_start = beacon->config.interval_anchor == IntervalAnchorStart;
+
     morse_log(
-        "beacon: worker start, %lu Hz, trigger=%s",
+        "beacon: worker start, %lu Hz, trigger=%s%s",
         beacon->config.frequency,
-        use_interval ? (use_activity ? "both" : "interval") : "activity");
+        use_interval ? (use_activity ? "both" : "interval") : "activity",
+        use_interval ? (anchor_start ? ", start-to-start" : ", end-to-start") : "");
     if(!cw_radio_listen(beacon->radio, &params)) {
         furi_mutex_acquire(beacon->mutex, FuriWaitForever);
         beacon->status.state = BeaconStateError;
@@ -100,15 +109,32 @@ static int32_t beacon_worker(void* context) {
     beacon->status.since_id_ms = 0;
     furi_mutex_release(beacon->mutex);
 
+    /* Interval mode runs off an absolute deadline rather than a countdown, so
+     * neither the length of a transmission nor the drift of this loop can walk
+     * the schedule. Every timer below likewise measures real elapsed time:
+     * furi_delay_ms(20) sleeps *at least* 20 ms and the loop body costs more on
+     * top, so a tick accumulator runs slow. */
+    const uint32_t tick_hz = furi_kernel_get_tick_frequency();
+    const uint32_t period_ticks = (uint32_t)((uint64_t)period_ms * tick_hz / 1000);
+    uint32_t next_id_tick = furi_get_tick() + period_ticks;
+
     if(beacon->config.id_on_start) {
+        uint32_t tx_start = furi_get_tick();
         beacon_send_id(beacon);
+        next_id_tick = (anchor_start ? tx_start : furi_get_tick()) + period_ticks;
         furi_mutex_acquire(beacon->mutex, FuriWaitForever);
         beacon->status.state = BeaconStateListening;
         furi_mutex_release(beacon->mutex);
     }
 
+    uint32_t last_tick = furi_get_tick();
+
     while(beacon->running) {
         furi_delay_ms(BEACON_TICK_MS);
+
+        uint32_t now_tick = furi_get_tick();
+        uint32_t dt = (uint32_t)((uint64_t)(now_tick - last_tick) * 1000 / tick_hz);
+        last_tick = now_tick;
 
         float rssi = cw_radio_rssi(beacon->radio);
         bool carrier = rssi > (float)beacon->config.squelch_dbm;
@@ -116,13 +142,17 @@ static int32_t beacon_worker(void* context) {
         furi_mutex_acquire(beacon->mutex, FuriWaitForever);
         beacon->status.rssi = rssi;
         beacon->status.carrier = carrier;
-        beacon->status.since_id_ms += BEACON_TICK_MS;
+        beacon->status.since_id_ms += dt;
         BeaconState state = beacon->status.state;
         furi_mutex_release(beacon->mutex);
 
         if(beacon->manual_id) {
             beacon->manual_id = false;
             beacon_send_id(beacon);
+            // A manual ID restarts a gap, but never shifts the grid - the whole
+            // point of start-to-start is that the slots do not move.
+            if(!anchor_start) next_id_tick = furi_get_tick() + period_ticks;
+            last_tick = furi_get_tick();
             carrier_ms = clear_ms = pending_ms = 0;
             furi_mutex_acquire(beacon->mutex, FuriWaitForever);
             beacon->status.state = BeaconStateListening;
@@ -130,10 +160,33 @@ static int32_t beacon_worker(void* context) {
             continue;
         }
 
-        if(use_interval && beacon->status.since_id_ms >= period_ms) {
+        if(use_interval && tick_reached(now_tick, next_id_tick)) {
             // Interval mode keys on schedule whether or not the channel is busy;
             // a fox has to be predictable to be huntable.
             beacon_send_id(beacon);
+
+            if(anchor_start) {
+                /* Advance the grid, not the clock. Slots stay at fixed multiples
+                 * of the period from the first one, so the cadence holds even
+                 * though each transmission takes seconds. */
+                next_id_tick += period_ticks;
+                uint32_t skipped = 0;
+                while(tick_reached(furi_get_tick(), next_id_tick)) {
+                    next_id_tick += period_ticks;
+                    skipped++;
+                }
+                if(skipped) {
+                    // Honouring start-to-start here would mean keying without a
+                    // break. Drop whole slots instead and say so.
+                    morse_log(
+                        "beacon: ID longer than the interval, skipped %lu slot(s)",
+                        skipped);
+                }
+            } else {
+                next_id_tick = furi_get_tick() + period_ticks;
+            }
+
+            last_tick = furi_get_tick();
             carrier_ms = clear_ms = pending_ms = 0;
             furi_mutex_acquire(beacon->mutex, FuriWaitForever);
             beacon->status.state = BeaconStateListening;
@@ -144,7 +197,7 @@ static int32_t beacon_worker(void* context) {
         switch(state) {
         case BeaconStateListening:
             if(carrier) {
-                carrier_ms += BEACON_TICK_MS;
+                carrier_ms += dt;
                 if(carrier_ms >= beacon->config.min_carrier_ms) {
                     furi_mutex_acquire(beacon->mutex, FuriWaitForever);
                     quiet_before = beacon->status.quiet_ms;
@@ -156,7 +209,7 @@ static int32_t beacon_worker(void* context) {
             } else {
                 carrier_ms = 0;
                 furi_mutex_acquire(beacon->mutex, FuriWaitForever);
-                beacon->status.quiet_ms += BEACON_TICK_MS;
+                beacon->status.quiet_ms += dt;
                 furi_mutex_release(beacon->mutex);
             }
             break;
@@ -165,7 +218,7 @@ static int32_t beacon_worker(void* context) {
             if(carrier) {
                 clear_ms = 0;
             } else {
-                clear_ms += BEACON_TICK_MS;
+                clear_ms += dt;
                 if(clear_ms >= beacon->config.hang_ms) {
                     furi_mutex_acquire(beacon->mutex, FuriWaitForever);
                     bool trigger = use_activity &&
@@ -187,7 +240,7 @@ static int32_t beacon_worker(void* context) {
 
         case BeaconStatePending:
             if(carrier) {
-                carrier_ms += BEACON_TICK_MS;
+                carrier_ms += dt;
                 if(carrier_ms >= beacon->config.min_carrier_ms) {
                     // traffic came back before we could ID - wait it out and retry
                     furi_mutex_acquire(beacon->mutex, FuriWaitForever);
@@ -197,9 +250,11 @@ static int32_t beacon_worker(void* context) {
                 }
             } else {
                 carrier_ms = 0;
-                pending_ms += BEACON_TICK_MS;
+                pending_ms += dt;
                 if(pending_ms >= beacon->config.courtesy_delay_ms) {
                     beacon_send_id(beacon);
+                    if(!anchor_start) next_id_tick = furi_get_tick() + period_ticks;
+                    last_tick = furi_get_tick();
                     furi_mutex_acquire(beacon->mutex, FuriWaitForever);
                     beacon->status.state = BeaconStateListening;
                     furi_mutex_release(beacon->mutex);
@@ -217,11 +272,10 @@ static int32_t beacon_worker(void* context) {
             use_activity && ((beacon->status.quiet_ms >= quiet_arm_ms) ||
                              (max_interval_ms &&
                               beacon->status.since_id_ms >= max_interval_ms));
+        int32_t remain_ticks = (int32_t)(next_id_tick - now_tick);
         beacon->status.next_id_ms =
-            use_interval ?
-                ((beacon->status.since_id_ms >= period_ms) ?
-                     0 :
-                     period_ms - beacon->status.since_id_ms) :
+            (use_interval && remain_ticks > 0) ?
+                (uint32_t)((uint64_t)remain_ticks * 1000 / tick_hz) :
                 0;
         furi_mutex_release(beacon->mutex);
     }

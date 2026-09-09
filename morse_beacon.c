@@ -48,9 +48,40 @@ typedef enum {
     SubmenuIndexAbout,
 } SubmenuIndex;
 
+/* Logical settings rows - identities, not positions. Rows appear and disappear
+ * with the mode, the trigger and the remote source, so the list is built through
+ * settings_add(), which records the mapping in both directions. The enum this
+ * replaces was positional and had already drifted out of step with the list. */
+typedef enum {
+    SettingIdText,
+    SettingFrequency,
+    SettingPreset,
+    SettingMode,
+    SettingDeviation,
+    SettingRxBw,
+    SettingTone,
+    SettingWpm,
+    SettingFarnsworth,
+    SettingSquelch,
+    SettingTrigger,
+    SettingPeriod,
+    SettingAnchor,
+    SettingQuiet,
+    SettingInterval,
+    SettingCourtesy,
+    SettingPreamble,
+    SettingTail,
+    SettingRadio,
+    SettingLink,
+    SettingBaud,
+    SettingIdOnStart,
+    SettingRowCount,
+} SettingRow;
+
 typedef enum {
     MorseEventTxDone = 100,
     MorseEventRadioError,
+    MorseEventSettingsDirty, // a change altered which rows are relevant
 } MorseEvent;
 
 typedef enum {
@@ -106,6 +137,11 @@ typedef struct {
     char text_buffer[MORSE_MAX_TEXT + 1];
     TextTarget text_target;
     MorseViewId current_view;
+
+    // settings list position <-> logical row, rebuilt with the list
+    uint8_t row_of_index[SettingRowCount];
+    uint8_t index_of_row[SettingRowCount];
+    uint8_t row_count;
 
     FuriThread* tx_thread;
     volatile bool tx_running;
@@ -265,6 +301,14 @@ static void about_build(void) {
         "fox or a plain beacon.\n"
         "\ebBoth:\eb whichever comes first.\n"
         "\ebOK\eb keys an ID immediately.\n\n"
+        "\e#Interval timing\n"
+        "\ebMeasure from\eb decides what the period is measured between. "
+        "\ebStart of TX\eb starts transmissions a fixed period apart, so the "
+        "cadence is the period exactly - what a fox needs. \ebEnd of TX\eb "
+        "makes the period the quiet gap between them, so the cycle grows by "
+        "however long the ID takes.\n"
+        "If the ID is longer than the interval, whole slots are dropped rather "
+        "than keying without a break, and the log says so.\n\n"
         "\e#MCW vs OOK\n"
         "MCW puts an audible tone on an FM carrier - this is what an FM radio "
         "hears. OOK keys the bare carrier and is silent on an FM receiver.\n\n"
@@ -809,35 +853,15 @@ static void morse_link_leave(MorseApp* app) {
 
 static void number_input_callback(void* context, int32_t number);
 
-typedef enum {
-    SettingIdText,
-    SettingFrequency,
-    SettingPreset,
-    SettingMode,
-    SettingDeviation,
-    SettingTone,
-    SettingWpm,
-    SettingFarnsworth,
-    SettingSquelch,
-    SettingTrigger,
-    SettingPeriod,
-    SettingQuiet,
-    SettingInterval,
-    SettingCourtesy,
-    SettingPreamble,
-    SettingTail,
-    SettingRadio,
-    SettingLink,
-    SettingBaud,
-    SettingIdOnStart,
-} SettingIndex;
-
 
 static void setting_mode_changed(VariableItem* item) {
     MorseApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
     app->config.mode = index;
     variable_item_set_current_value_text(item, mode_names[index]);
+    /* Rebuilding here would free the array this very item lives in.
+     * Post it instead: the dispatcher runs it after this returns. */
+    view_dispatcher_send_custom_event(app->view_dispatcher, MorseEventSettingsDirty);
 }
 
 static void setting_deviation_changed(VariableItem* item) {
@@ -912,6 +936,9 @@ static void setting_trigger_changed(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     app->config.beacon_trigger = index;
     variable_item_set_current_value_text(item, trigger_names[index]);
+    /* Rebuilding here would free the array this very item lives in.
+     * Post it instead: the dispatcher runs it after this returns. */
+    view_dispatcher_send_custom_event(app->view_dispatcher, MorseEventSettingsDirty);
 }
 
 static void setting_period_changed(VariableItem* item) {
@@ -979,6 +1006,9 @@ static void setting_link_changed(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     app->config.link_source = index;
     variable_item_set_current_value_text(item, link_names[index]);
+    /* Rebuilding here would free the array this very item lives in.
+     * Post it instead: the dispatcher runs it after this returns. */
+    view_dispatcher_send_custom_event(app->view_dispatcher, MorseEventSettingsDirty);
 }
 
 static void setting_baud_changed(VariableItem* item) {
@@ -996,17 +1026,30 @@ static void setting_id_on_start_changed(VariableItem* item) {
 }
 
 
+static const char* const anchor_names[] = {"End of TX", "Start of TX"};
+
+static void setting_anchor_changed(VariableItem* item) {
+    MorseApp* app = variable_item_get_context(item);
+    uint8_t index = variable_item_get_current_value_index(item);
+    app->config.interval_anchor = index;
+    variable_item_set_current_value_text(item, anchor_names[index]);
+}
+
 static void settings_enter_callback(void* context, uint32_t index) {
     MorseApp* app = context;
 
-    if(index == SettingIdText) {
+    // The list is index-addressed; everything else here thinks in logical rows.
+    if(index >= app->row_count) return;
+    SettingRow row = (SettingRow)app->row_of_index[index];
+
+    if(row == SettingIdText) {
         app->text_target = TextTargetId;
         strncpy(app->text_buffer, app->config.id_text, MORSE_MAX_TEXT);
         app->text_buffer[MORSE_MAX_TEXT] = '\0';
         text_input_set_header_text(app->text_input, "Station ID / callsign");
         app->current_view = MorseViewTextInput;
         view_dispatcher_switch_to_view(app->view_dispatcher, MorseViewTextInput);
-    } else if(index == SettingFrequency) {
+    } else if(row == SettingFrequency) {
         number_input_set_header_text(app->number_input, "Frequency, 100 Hz steps");
         number_input_set_result_callback(
             app->number_input,
@@ -1027,18 +1070,53 @@ static uint8_t index_of_u16(const uint16_t* values, uint8_t count, uint16_t valu
     return 0;
 }
 
+/* Adds a row and records where it landed, so both the enter callback and the
+ * post-rebuild cursor can work in logical rows rather than positions. */
+static VariableItem* settings_add(
+    MorseApp* app,
+    SettingRow row,
+    const char* label,
+    uint8_t values_count,
+    VariableItemChangeCallback change_callback) {
+    app->index_of_row[row] = app->row_count;
+    app->row_of_index[app->row_count] = row;
+    app->row_count++;
+    return variable_item_list_add(app->var_list, label, values_count, change_callback, app);
+}
+
 static void settings_rebuild(MorseApp* app) {
     VariableItemList* list = app->var_list;
-    uint8_t selected = variable_item_list_get_selected_item_index(list);
+
+    /* Remember the logical row under the cursor rather than its index - a row
+     * above it may be about to disappear. */
+    uint8_t prev_index = variable_item_list_get_selected_item_index(list);
+    SettingRow prev_row = (app->row_count && prev_index < app->row_count) ?
+                              (SettingRow)app->row_of_index[prev_index] :
+                              SettingIdText;
+
     variable_item_list_reset(list);
+    app->row_count = 0;
+    memset(app->index_of_row, 0xFF, sizeof(app->index_of_row));
+    memset(app->row_of_index, 0, sizeof(app->row_of_index));
+
+    /* A row is shown when changing it would change what the beacon does.
+     * Squelch and RX filter stay visible even in pure interval mode: nothing
+     * keys off them there, but they still drive the carrier indicator on the
+     * beacon screen, which is worth being able to set. */
+    const bool mcw = app->config.mode == CwModeMcw;
+    const bool use_interval = app->config.beacon_trigger == BeaconTriggerInterval ||
+                              app->config.beacon_trigger == BeaconTriggerBoth;
+    const bool use_activity = app->config.beacon_trigger == BeaconTriggerActivity ||
+                              app->config.beacon_trigger == BeaconTriggerBoth;
+    const bool uart = app->config.link_source == LinkSourceUart;
 
     char buf[24];
     VariableItem* item;
 
-    item = variable_item_list_add(list, "Station ID", 1, NULL, app);
+    item = settings_add(app, SettingIdText, "Station ID", 1, NULL);
     variable_item_set_current_value_text(item, app->config.id_text);
 
-    item = variable_item_list_add(list, "Frequency", 1, NULL, app);
+    item = settings_add(app, SettingFrequency, "Frequency", 1, NULL);
     morse_format_freq(buf, sizeof(buf), app->config.frequency);
     variable_item_set_current_value_text(item, buf);
 
@@ -1050,36 +1128,41 @@ static void settings_rebuild(MorseApp* app) {
             preset_match = true;
         }
     }
-    item = variable_item_list_add(
-        list, "Preset", FREQ_PRESET_COUNT, setting_preset_changed, app);
+    item = settings_add(app, SettingPreset, "Preset", FREQ_PRESET_COUNT, setting_preset_changed);
     variable_item_set_current_value_index(item, preset_index);
     variable_item_set_current_value_text(
         item, preset_match ? (char*)freq_preset_names[preset_index] : "Custom");
 
-    item = variable_item_list_add(list, "Mode", CwModeCount, setting_mode_changed, app);
+    item = settings_add(app, SettingMode, "Mode", CwModeCount, setting_mode_changed);
     variable_item_set_current_value_index(item, app->config.mode);
     variable_item_set_current_value_text(item, mode_names[app->config.mode]);
 
-    item = variable_item_list_add(
-        list, "Deviation", CwDeviationCount, setting_deviation_changed, app);
-    variable_item_set_current_value_index(item, app->config.deviation);
-    variable_item_set_current_value_text(item, deviation_names[app->config.deviation]);
+    /* OOK keys the bare carrier. There is no tone to pitch, no deviation to
+     * set, and no carrier for an unkeyed preamble or tail to hold up. */
+    if(mcw) {
+        item = settings_add(
+            app, SettingDeviation, "Deviation", CwDeviationCount, setting_deviation_changed);
+        variable_item_set_current_value_index(item, app->config.deviation);
+        variable_item_set_current_value_text(item, deviation_names[app->config.deviation]);
+    }
 
-    item = variable_item_list_add(list, "RX filter", CwRxBwCount, setting_rx_bw_changed, app);
+    item = settings_add(app, SettingRxBw, "RX filter", CwRxBwCount, setting_rx_bw_changed);
     variable_item_set_current_value_index(item, app->config.rx_bw);
     variable_item_set_current_value_text(item, rx_bw_names[app->config.rx_bw]);
 
-    item = variable_item_list_add(list, "Tone", 17, setting_tone_changed, app);
-    variable_item_set_current_value_index(item, (app->config.tone_hz - 400) / 50);
-    snprintf(buf, sizeof(buf), "%u Hz", app->config.tone_hz);
-    variable_item_set_current_value_text(item, buf);
+    if(mcw) {
+        item = settings_add(app, SettingTone, "Tone", 17, setting_tone_changed);
+        variable_item_set_current_value_index(item, (app->config.tone_hz - 400) / 50);
+        snprintf(buf, sizeof(buf), "%u Hz", app->config.tone_hz);
+        variable_item_set_current_value_text(item, buf);
+    }
 
-    item = variable_item_list_add(list, "Speed", 36, setting_wpm_changed, app);
+    item = settings_add(app, SettingWpm, "Speed", 36, setting_wpm_changed);
     variable_item_set_current_value_index(item, app->config.wpm - 5);
     snprintf(buf, sizeof(buf), "%u wpm", app->config.wpm);
     variable_item_set_current_value_text(item, buf);
 
-    item = variable_item_list_add(list, "Farnsworth", 17, setting_farnsworth_changed, app);
+    item = settings_add(app, SettingFarnsworth, "Farnsworth", 17, setting_farnsworth_changed);
     variable_item_set_current_value_index(
         item, app->config.farnsworth ? app->config.farnsworth - 4 : 0);
     if(app->config.farnsworth) {
@@ -1089,77 +1172,102 @@ static void settings_rebuild(MorseApp* app) {
     }
     variable_item_set_current_value_text(item, buf);
 
-    item = variable_item_list_add(list, "Squelch", 13, setting_squelch_changed, app);
+    item = settings_add(app, SettingSquelch, "Squelch", 13, setting_squelch_changed);
     variable_item_set_current_value_index(item, (app->config.squelch_dbm + 110) / 5);
     snprintf(buf, sizeof(buf), "%d dBm", app->config.squelch_dbm);
     variable_item_set_current_value_text(item, buf);
 
-    item = variable_item_list_add(
-        list, "Trigger", BeaconTriggerCount, setting_trigger_changed, app);
+    item =
+        settings_add(app, SettingTrigger, "Trigger", BeaconTriggerCount, setting_trigger_changed);
     variable_item_set_current_value_index(item, app->config.beacon_trigger);
     variable_item_set_current_value_text(item, trigger_names[app->config.beacon_trigger]);
 
-    uint8_t pi = index_of_u16(period_values, COUNT_OF(period_values), app->config.period_s);
-    item = variable_item_list_add(
-        list, "Interval", COUNT_OF(period_values), setting_period_changed, app);
-    variable_item_set_current_value_index(item, pi);
-    variable_item_set_current_value_text(item, (char*)period_names[pi]);
+    if(use_interval) {
+        uint8_t pi = index_of_u16(period_values, COUNT_OF(period_values), app->config.period_s);
+        item = settings_add(
+            app, SettingPeriod, "Interval", COUNT_OF(period_values), setting_period_changed);
+        variable_item_set_current_value_index(item, pi);
+        variable_item_set_current_value_text(item, (char*)period_names[pi]);
 
-    item = variable_item_list_add(
-        list, "Quiet time", COUNT_OF(quiet_values), setting_quiet_changed, app);
-    uint8_t qi = index_of_u16(quiet_values, COUNT_OF(quiet_values), app->config.quiet_time_s);
-    variable_item_set_current_value_index(item, qi);
-    variable_item_set_current_value_text(item, (char*)quiet_names[qi]);
+        item = settings_add(
+            app, SettingAnchor, "Measure from", IntervalAnchorCount, setting_anchor_changed);
+        variable_item_set_current_value_index(item, app->config.interval_anchor);
+        variable_item_set_current_value_text(item, anchor_names[app->config.interval_anchor]);
+    }
 
-    item = variable_item_list_add(
-        list, "Max ID gap", COUNT_OF(interval_values), setting_interval_changed, app);
-    uint8_t ii =
-        index_of_u16(interval_values, COUNT_OF(interval_values), app->config.max_interval_s);
-    variable_item_set_current_value_index(item, ii);
-    variable_item_set_current_value_text(item, (char*)interval_names[ii]);
+    /* The activity state machine - how much dead air arms the ID, the backstop
+     * gap, and the pause before keying - only runs when traffic can trigger. */
+    if(use_activity) {
+        item = settings_add(
+            app, SettingQuiet, "Quiet time", COUNT_OF(quiet_values), setting_quiet_changed);
+        uint8_t qi = index_of_u16(quiet_values, COUNT_OF(quiet_values), app->config.quiet_time_s);
+        variable_item_set_current_value_index(item, qi);
+        variable_item_set_current_value_text(item, (char*)quiet_names[qi]);
 
-    item = variable_item_list_add(list, "Courtesy", 11, setting_courtesy_changed, app);
-    variable_item_set_current_value_index(item, app->config.courtesy_delay_ms / 500);
-    snprintf(
-        buf,
-        sizeof(buf),
-        "%u.%u s",
-        app->config.courtesy_delay_ms / 1000,
-        (app->config.courtesy_delay_ms % 1000) / 100);
-    variable_item_set_current_value_text(item, buf);
+        item = settings_add(
+            app,
+            SettingInterval,
+            "Max ID gap",
+            COUNT_OF(interval_values),
+            setting_interval_changed);
+        uint8_t ii =
+            index_of_u16(interval_values, COUNT_OF(interval_values), app->config.max_interval_s);
+        variable_item_set_current_value_index(item, ii);
+        variable_item_set_current_value_text(item, (char*)interval_names[ii]);
 
-    item = variable_item_list_add(list, "Preamble", 11, setting_preamble_changed, app);
-    variable_item_set_current_value_index(item, app->config.preamble_ms / 100);
-    snprintf(buf, sizeof(buf), "%u ms", app->config.preamble_ms);
-    variable_item_set_current_value_text(item, buf);
+        item = settings_add(app, SettingCourtesy, "Courtesy", 11, setting_courtesy_changed);
+        variable_item_set_current_value_index(item, app->config.courtesy_delay_ms / 500);
+        snprintf(
+            buf,
+            sizeof(buf),
+            "%u.%u s",
+            app->config.courtesy_delay_ms / 1000,
+            (app->config.courtesy_delay_ms % 1000) / 100);
+        variable_item_set_current_value_text(item, buf);
+    }
 
-    item = variable_item_list_add(list, "Tail", 11, setting_tail_changed, app);
-    variable_item_set_current_value_index(item, app->config.tail_ms / 100);
-    snprintf(buf, sizeof(buf), "%u ms", app->config.tail_ms);
-    variable_item_set_current_value_text(item, buf);
+    if(mcw) {
+        item = settings_add(app, SettingPreamble, "Preamble", 11, setting_preamble_changed);
+        variable_item_set_current_value_index(item, app->config.preamble_ms / 100);
+        snprintf(buf, sizeof(buf), "%u ms", app->config.preamble_ms);
+        variable_item_set_current_value_text(item, buf);
 
-    item = variable_item_list_add(list, "Radio", 2, setting_radio_changed, app);
+        item = settings_add(app, SettingTail, "Tail", 11, setting_tail_changed);
+        variable_item_set_current_value_index(item, app->config.tail_ms / 100);
+        snprintf(buf, sizeof(buf), "%u ms", app->config.tail_ms);
+        variable_item_set_current_value_text(item, buf);
+    }
+
+    item = settings_add(app, SettingRadio, "Radio", 2, setting_radio_changed);
     variable_item_set_current_value_index(item, app->config.external_radio ? 1 : 0);
     variable_item_set_current_value_text(item, radio_names[app->config.external_radio ? 1 : 0]);
 
-    item = variable_item_list_add(list, "Remote", LinkSourceCount, setting_link_changed, app);
+    item = settings_add(app, SettingLink, "Remote", LinkSourceCount, setting_link_changed);
     variable_item_set_current_value_index(item, app->config.link_source);
     variable_item_set_current_value_text(item, link_names[app->config.link_source]);
 
-    uint8_t bi = 0;
-    for(uint8_t i = 0; i < COUNT_OF(baud_values); i++) {
-        if(baud_values[i] == app->config.link_baudrate) bi = i;
+    // Baud rate belongs to the GPIO UART; BLE has no such knob.
+    if(uart) {
+        uint8_t bi = 0;
+        for(uint8_t i = 0; i < COUNT_OF(baud_values); i++) {
+            if(baud_values[i] == app->config.link_baudrate) bi = i;
+        }
+        item = settings_add(
+            app, SettingBaud, "UART baud", COUNT_OF(baud_values), setting_baud_changed);
+        variable_item_set_current_value_index(item, bi);
+        variable_item_set_current_value_text(item, (char*)baud_names[bi]);
     }
-    item = variable_item_list_add(
-        list, "UART baud", COUNT_OF(baud_values), setting_baud_changed, app);
-    variable_item_set_current_value_index(item, bi);
-    variable_item_set_current_value_text(item, (char*)baud_names[bi]);
 
-    item = variable_item_list_add(list, "ID on start", 2, setting_id_on_start_changed, app);
+    item = settings_add(app, SettingIdOnStart, "ID on start", 2, setting_id_on_start_changed);
     variable_item_set_current_value_index(item, app->config.id_on_start ? 1 : 0);
     variable_item_set_current_value_text(item, onoff_names[app->config.id_on_start ? 1 : 0]);
 
-    variable_item_list_set_selected_item(list, selected);
+    /* Stay on the row the cursor was on. If it just vanished, fall back to the
+     * row that hid it, which is always the one being edited. */
+    uint8_t target = app->index_of_row[prev_row];
+    if(target == 0xFF) target = app->index_of_row[SettingTrigger];
+    if(target == 0xFF || target >= app->row_count) target = 0;
+    variable_item_list_set_selected_item(list, target);
 }
 
 /* -------------------------------------------------------------- navigation */
@@ -1274,6 +1382,11 @@ static bool morse_navigation_callback(void* context) {
 
 static bool morse_custom_event_callback(void* context, uint32_t event) {
     MorseApp* app = context;
+
+    if(event == MorseEventSettingsDirty) {
+        if(app->current_view == MorseViewSettings) settings_rebuild(app);
+        return true;
+    }
 
     if(event == MorseEventTxDone) {
         morse_finish_text_tx(app);

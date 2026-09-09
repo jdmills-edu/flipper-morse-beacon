@@ -60,15 +60,35 @@ at 10 wpm overall lands on 30.000 s per five words.
 | `Interval` | ID every `Interval`, whether or not anyone is on the channel. For a fox or a plain beacon. |
 | `Both` | Whichever comes first. |
 
-`Interval` runs 15 s to 30 min. It is the **gap between transmissions** — the
-time from the end of one ID to the start of the next — not a start-to-start
-cycle. Measured on air with a 15 s interval and a 6.84 s ID, the cycle came out
-at a very steady 22.65 s (15 + 6.84 + ~0.8 s of retune and preset reload). If
-you need a fixed start-to-start cycle instead, that is a small change to the
-worker.
+`Interval` runs 15 s to 30 min. **`Measure from` decides what the period is
+measured between:**
 
-`Quiet time` and `Max ID gap` apply only to the activity rule and are ignored in
-`Interval` mode.
+| `Measure from` | Meaning |
+|---|---|
+| `Start of TX` (default) | Transmissions begin at fixed multiples of the period. The cadence is the period, exactly. |
+| `End of TX` | The period is the gap of dead air between one ID ending and the next starting. The cycle is then period + however long the ID takes. |
+
+`End of TX` was the original behaviour and is still the right choice if what you
+care about is guaranteeing a minimum quiet gap for other users. But it folds the
+length of every transmission into the cycle: measured on air with a 15 s interval
+and a 6.84 s ID, the cadence came out at 22.65 s (15 + 6.84 + ~0.8 s of retune
+and preset reload). For a fox that has to be found on a schedule, that is the
+wrong knob.
+
+`Start of TX` schedules against an absolute deadline and advances it by whole
+periods, so quantisation never accumulates — a 60 s interval stays on 60 s
+indefinitely rather than walking.
+
+**If the identifier is longer than the interval** there is no honest way to keep
+transmissions one period apart without keying continuously. Whole slots are
+dropped instead and the overrun is written to the log:
+
+```
+beacon: ID longer than the interval, skipped 1 slot(s)
+```
+
+`Quiet time`, `Max ID gap` and `Courtesy` apply only to the activity rule, and
+are hidden in `Interval` mode.
 
 ## Activity trigger logic
 
@@ -106,7 +126,8 @@ passed since the last ID, the next transmission end triggers one anyway.
 | Speed / Farnsworth | Character speed and optional stretched spacing. |
 | Squelch | −110 to −50 dBm. Tune this against the live channel. |
 | Trigger | On activity / Interval / Both — see above. |
-| Interval | 15 s–30 min. Gap between IDs in the interval modes. |
+| Interval | 15 s–30 min. Interval-mode period. |
+| Measure from | `Start of TX` or `End of TX` — see above. Interval modes only. |
 | Quiet time | Dead air needed before the next transmission triggers an ID (activity rule only). |
 | Max ID gap | Backstop interval, or OFF. |
 | Courtesy | Delay after the channel clears before keying. |
@@ -114,6 +135,22 @@ passed since the last ID, the next transmission end triggers one anyway.
 | Radio | Internal CC1101 or an attached external module. |
 | Remote | BLE or UART for the remote-text screen. |
 | ID on start | Off by default, so entering beacon mode does not immediately key. |
+
+### Rows appear only when they apply
+
+The list is built from the current configuration rather than being fixed, so it
+only ever shows rows that would change what the beacon does:
+
+| Hidden when | Rows |
+|---|---|
+| Mode is `OOK` | `Deviation`, `Tone`, `Preamble`, `Tail` — OOK keys the bare carrier, so there is no tone to pitch and no carrier for an unkeyed preamble to hold up |
+| Trigger is `Interval` | `Quiet time`, `Max ID gap`, `Courtesy` — the whole activity state machine is out of circuit |
+| Trigger is `On activity` | `Interval`, `Measure from` |
+| Remote is not `UART` | `UART baud` |
+
+`Squelch` and `RX filter` deliberately stay visible in every mode. Nothing keys
+off them in `Interval` mode, but they still drive the carrier indicator on the
+beacon screen, which is worth being able to set.
 
 Settings persist to `/ext/apps_data/morse_beacon/beacon.conf`.
 
@@ -210,11 +247,17 @@ only transmit on its output.
 ```
 morse.c/h    Morse table, PARIS + Farnsworth timing, text -> timed segments
 radio.c/h    CC1101 ownership: custom presets, async-TX ISR generator, RSSI
-beacon.c/h   channel-watching state machine and the ID trigger rules
+beacon.c/h   channel-watching state machine, ID trigger rules, interval schedule
 link.c/h     BLE serial / UART line receiver with a worker thread
-config.c/h   settings struct, defaults, persistence
-morse_beacon.c   views, menus, settings list, navigation
+config.c/h   settings struct, defaults, validation, persistence
+idlog.c/h    timestamped station log
+morse_beacon.c   views, menus, conditional settings list, navigation
+tools/       host-side: off-air capture and decode (Python), sched_test.c
 ```
+
+Sources are listed explicitly in `application.fam` rather than globbed — ufbt's
+default `*.c*` pattern is recursive and would otherwise sweep `tools/sched_test.c`
+into the firmware build.
 
 ## Verified
 
@@ -238,7 +281,8 @@ FM-demodulated and decoded blind:
 
 Also exercised on the device over the CLI `input` command with no crash and flat
 heap across repeated entry/exit cycles: menu, beacon RX, every settings row, and
-the BLE link screen.
+the BLE link screen. **That sweep predates the settings rewrite below** — it
+covered the old fixed list, not the current conditional one.
 
 **BLE remote text verified on air, 2026-09-08.** `General Kenobi!` typed on an
 iPhone in nRF Connect, keyed by the Flipper, decoded off air by a third radio:
@@ -253,9 +297,56 @@ off air: 9.65s tone 797 Hz dev 4.80 kHz dit 66.5 ms (18.1 wpm) -> "GENERAL KENOB
 
 **Interval beaconing verified on air, 2026-09-08.** Trigger `Interval` at 15 s on
 an empty channel produced four IDs at 20.79, 43.44, 66.09 and 88.74 s — a 22.65 s
-cycle with no jitter, each decoding as `DE CALLSIGN` at 797 Hz / 18.1 wpm.
+cycle with no jitter, each decoding as `DE CALLSIGN` at 797 Hz / 18.1 wpm. That
+22.65 s is the `End of TX` behaviour, and is what prompted adding `Measure from`.
+
+**Interval scheduling checked on the host.** `tools/sched_test.c` runs the
+deadline arithmetic from `beacon.c` — the slot advance, the overrun skip and the
+wraparound test — outside the firmware:
+
+```
+15 s, start-to-start     starts: 15.00 30.01 45.00 60.01   gaps: 15.01 14.99 15.01
+15 s, end-to-start       starts: 15.00 36.83 58.66         gaps: 21.83 21.83
+60 s, start-to-start     starts: 60.00 120.01 180.00 240.01 gaps: 60.01 59.99 60.01
+5 s, start, TX overruns  starts: 5.00 15.01 25.00 35.01    gaps: 10.01 9.99 10.01  (4 skipped)
+15 s, start, across wrap starts: 15.00 30.01 45.00 60.01   gaps: 15.01 14.99 15.01
+```
+
+The +-10 ms is the 20 ms poll quantisation and does not accumulate — that is the
+point of scheduling against a deadline instead of a countdown. `end-to-start`
+reproduces the 21.8 s cycle measured on air. Build it with
+`gcc -O2 -Wall -Wextra -o sched_test tools/sched_test.c`.
+
+### Not yet verified on device
+
+`Measure from` and the conditional settings list were written after the Flipper
+came off the bench, and have been checked only by building and by the host test
+above. Specifically outstanding:
+
+- the interval cadence measured on real hardware, either anchor
+- rows appearing and disappearing without a crash as `Mode`, `Trigger` and
+  `Remote` change — the rebuild is deferred through a custom event precisely
+  because doing it inline frees the array the live row sits in, and that path
+  has not been exercised on hardware
+- the cursor landing on the right row after a rebuild
+
+The on-air results above remain valid: they describe behaviour that has not
+changed, and the 22.65 s figure is the `End of TX` path.
 
 ### Bugs this shook out
+
+**Timers counted loop passes, not elapsed time.** `furi_delay_ms(20)` sleeps *at
+least* 20 ms and the loop body costs more on top, so every accumulator that
+advanced by `+= BEACON_TICK_MS` ran slow. The same mistake measured 13% slow in
+the sibling repeater-controller project at a 10 ms tick. Every timer now derives
+its step from `furi_get_tick()`, and resynchronises after a transmission so its
+duration is not billed to the interval.
+
+**The settings row enum had drifted.** `SettingIndex` was positional and had
+never had `RX filter` added, so every identifier past `SettingDeviation` named
+the wrong row. Only rows 0 and 1 were ever compared against it, so nothing
+misbehaved — but it was one edit away from doing so. Rows are now identities, and
+`settings_add()` records the position mapping in both directions.
 
 - `variable_item_list_add` returns a pointer into an m-lib array that reallocates
   as later rows are added. Holding one across further adds dangles it and crashed
@@ -301,6 +392,20 @@ way to see what the radio did when nobody is watching the screen:
 2026-09-08 13:25:11 listen: asked 433920000 Hz, tuned 433919830 Hz
 2026-09-08 13:26:11 id: keying "DE CALLSIGN"
 2026-09-08 13:26:18 send: 433920000 Hz MCW 57 seg, 6833 ms planned, 6840 ms actual
+```
+
+The worker start line also records the trigger and, in the interval modes, which
+end of the transmission the period is measured from:
+
+```
+beacon: worker start, 433920000 Hz, trigger=interval, start-to-start
+```
+
+and an identifier that will not fit inside the interval is reported rather than
+silently keying continuously:
+
+```
+beacon: ID longer than the interval, skipped 1 slot(s)
 ```
 
 The file grows without bound; delete it when it gets large.
