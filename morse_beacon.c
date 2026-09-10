@@ -202,7 +202,7 @@ static const char* const freq_preset_names[] = {
 };
 #define FREQ_PRESET_COUNT COUNT_OF(freq_presets)
 
-static const char* const mode_names[] = {"MCW (FM)", "OOK (CW)"};
+static const char* const mode_names[] = {"MCW (FM)", "CW (OOK)", "SSB (USB)", "SSB (LSB)"};
 static const char* const deviation_names[] = {"2.4 kHz", "4.8 kHz"};
 static const char* const rx_bw_names[] = {"58 kHz", "101 kHz", "135 kHz", "270 kHz"};
 static const char* const onoff_names[] = {"OFF", "ON"};
@@ -309,9 +309,13 @@ static void about_build(void) {
         "however long the ID takes.\n"
         "If the ID is longer than the interval, whole slots are dropped rather "
         "than keying without a break, and the log says so.\n\n"
-        "\e#MCW vs OOK\n"
+        "\e#Modes\n"
         "MCW puts an audible tone on an FM carrier - this is what an FM radio "
-        "hears. OOK keys the bare carrier and is silent on an FM receiver.\n\n"
+        "hears. CW (OOK) keys the bare carrier: true CW, silent on an FM "
+        "receiver but a tone on anything with a BFO. The SSB modes key the "
+        "carrier offset from the dial by the Tone setting, so an SSB receiver "
+        "tuned to the dial frequency in the matching sideband hears the tone "
+        "at that pitch.\n\n"
         "\e#Remote text\n"
         "Pair a phone over BLE, or wire a device to pins 13/14, and every line "
         "you send is keyed as Morse. A newline ends a line, and so does a "
@@ -1137,8 +1141,10 @@ static void settings_rebuild(MorseApp* app) {
     variable_item_set_current_value_index(item, app->config.mode);
     variable_item_set_current_value_text(item, mode_names[app->config.mode]);
 
-    /* OOK keys the bare carrier. There is no tone to pitch, no deviation to
-     * set, and no carrier for an unkeyed preamble or tail to hold up. */
+    /* CW keys the bare carrier. There is no tone to pitch, no deviation to
+     * set, and no carrier for an unkeyed preamble or tail to hold up. The SSB
+     * modes also key a bare carrier, but Tone stays visible for them: it sets
+     * the carrier's offset from the dial, which IS the received pitch. */
     if(mcw) {
         item = settings_add(
             app, SettingDeviation, "Deviation", CwDeviationCount, setting_deviation_changed);
@@ -1150,7 +1156,7 @@ static void settings_rebuild(MorseApp* app) {
     variable_item_set_current_value_index(item, app->config.rx_bw);
     variable_item_set_current_value_text(item, rx_bw_names[app->config.rx_bw]);
 
-    if(mcw) {
+    if(app->config.mode != CwModeOok) {
         item = settings_add(app, SettingTone, "Tone", 17, setting_tone_changed);
         variable_item_set_current_value_index(item, (app->config.tone_hz - 400) / 50);
         snprintf(buf, sizeof(buf), "%u Hz", app->config.tone_hz);

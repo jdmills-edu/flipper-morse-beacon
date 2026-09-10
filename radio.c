@@ -86,9 +86,10 @@ static void cw_preset_put(uint8_t* buf, size_t* len, uint8_t reg, uint8_t value)
  * Layout is what furi_hal_subghz_load_custom_preset() expects:
  * reg/value pairs, 0x00 0x00, then the 8-byte PA table. */
 static void cw_radio_build_preset(CwRadio* radio, const CwRadioParams* params) {
-    const uint8_t* base = (params->mode == CwModeOok) ?
-                              subghz_device_cc1101_preset_ook_270khz_async_regs :
-                              subghz_device_cc1101_preset_2fsk_dev2_38khz_async_regs;
+    // Every mode except MCW keys a bare carrier, so they all share the OOK base.
+    const uint8_t* base = (params->mode == CwModeMcw) ?
+                              subghz_device_cc1101_preset_2fsk_dev2_38khz_async_regs :
+                              subghz_device_cc1101_preset_ook_270khz_async_regs;
 
     size_t len = 0;
     for(size_t i = 0; base[i] != 0x00 && len + 12 < CW_PRESET_MAX_BYTES; i += 2) {
@@ -120,14 +121,28 @@ static void cw_radio_build_preset(CwRadio* radio, const CwRadioParams* params) {
 
     // OOK keys between PA table entry 0 (off) and 1 (max); FSK holds entry 0.
     memset(&radio->preset[len], 0, 8);
-    if(params->mode == CwModeOok) {
-        radio->preset[len + 1] = 0xC0;
-    } else {
+    if(params->mode == CwModeMcw) {
         radio->preset[len + 0] = 0xC0;
+    } else {
+        radio->preset[len + 1] = 0xC0;
     }
     len += 8;
     furi_assert(len <= CW_PRESET_MAX_BYTES);
 }
+
+/* The SSB modes are how a real rig sends CW into an SSB passband: key the bare
+ * carrier tone_hz away from the dial frequency, and a receiver sitting on the
+ * dial in the matching sideband hears the beat note at exactly tone_hz. The
+ * CC1101 synthesizer steps in ~397 Hz increments (26 MHz / 2^16), so the pitch
+ * lands on the nearest step - close enough for an ID. */
+static uint32_t cw_radio_tx_frequency(const CwRadioParams* params) {
+    uint32_t tone = params->tone_hz ? params->tone_hz : 800;
+    if(params->mode == CwModeSsbUsb) return params->frequency + tone;
+    if(params->mode == CwModeSsbLsb) return params->frequency - tone;
+    return params->frequency;
+}
+
+static const char* const cw_mode_log_names[CwModeCount] = {"MCW", "OOK", "SSB-USB", "SSB-LSB"};
 
 /* --------------------------------------------------------------- async TX */
 
@@ -290,8 +305,10 @@ bool cw_radio_send(CwRadio* radio, const MorseStream* stream, const CwRadioParam
         morse_log("send: no device or empty stream");
         return false;
     }
-    if(!cw_radio_frequency_supported(params->frequency)) {
-        morse_log("send: %lu Hz is outside the radio's tuning range", params->frequency);
+    // SSB modes key the carrier offset from the dial by the tone pitch.
+    uint32_t tx_frequency = cw_radio_tx_frequency(params);
+    if(!cw_radio_frequency_supported(tx_frequency)) {
+        morse_log("send: %lu Hz is outside the radio's tuning range", tx_frequency);
         return false;
     }
 
@@ -311,12 +328,12 @@ bool cw_radio_send(CwRadio* radio, const MorseStream* stream, const CwRadioParam
     subghz_devices_idle(radio->device);
     cw_radio_build_preset(radio, params);
     subghz_devices_load_preset(radio->device, FuriHalSubGhzPresetCustom, radio->preset);
-    subghz_devices_set_frequency(radio->device, params->frequency);
+    subghz_devices_set_frequency(radio->device, tx_frequency);
 
-    if(!cw_radio_tx_allowed(params->frequency)) {
+    if(!cw_radio_tx_allowed(tx_frequency)) {
         morse_log(
             "send: firmware does not permit TX at %lu Hz (region %s)",
-            params->frequency,
+            tx_frequency,
             furi_hal_region_get_name());
         return false;
     }
@@ -334,8 +351,8 @@ bool cw_radio_send(CwRadio* radio, const MorseStream* stream, const CwRadioParam
             subghz_devices_stop_async_tx(radio->device);
             morse_log(
                 "send: %lu Hz %s %u seg, %lu ms planned, %lu ms actual",
-                params->frequency,
-                (params->mode == CwModeMcw) ? "MCW" : "OOK",
+                tx_frequency,
+                cw_mode_log_names[(params->mode < CwModeCount) ? params->mode : CwModeMcw],
                 (unsigned)stream->count,
                 stream->total_us / 1000,
                 furi_get_tick() - started);
@@ -347,8 +364,8 @@ bool cw_radio_send(CwRadio* radio, const MorseStream* stream, const CwRadioParam
         morse_log(
             "send: firmware refused TX at %lu Hz (outside its default TX range; "
             "the extended-range setting widens it)",
-            params->frequency);
-        FURI_LOG_E(TAG, "TX refused at %lu Hz", params->frequency);
+            tx_frequency);
+        FURI_LOG_E(TAG, "TX refused at %lu Hz", tx_frequency);
     }
 
     radio->sending = false;

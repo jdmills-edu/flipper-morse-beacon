@@ -34,9 +34,19 @@ turns that back into an 800 Hz tone. During the spaces between dits and dahs the
 line is held at one tone, so the carrier stays up and the audio simply goes
 quiet — which is exactly what a hardware repeater's ID sounds like.
 
-**OOK.** The carrier itself is keyed on and off. This is real CW, and it is what
-you want if something is listening with an AM/CW detector — but on an FM
-receiver it just opens and closes the squelch, with no tone.
+**CW (OOK).** The carrier itself is keyed on and off. This is real CW, and it is
+what you want if something is listening with an AM/CW detector or a BFO — but on
+an FM receiver it just opens and closes the squelch, with no tone.
+
+**SSB (USB / LSB).** The same bare-carrier keying, but the carrier is offset
+from the dial frequency by the Tone setting — above the dial for USB, below for
+LSB. That is exactly how a real rig sends CW into an SSB passband: a receiver
+sitting on the dial frequency in the matching sideband hears the beat note at
+the tone pitch. The CC1101 synthesizer steps in ~397 Hz increments
+(26 MHz / 2¹⁶), so the actual pitch lands on the nearest step — an 800 Hz
+setting comes out near 794 Hz. Preamble/tail don't apply (there is no carrier
+to hold up between elements), and the RX side still parks on the dial
+frequency, since the offset is far inside even the narrowest channel filter.
 
 The deviation values come from patching `DEVIATN` in a custom CC1101 preset
 built at runtime from the stock 2-FSK register table (`0x04` → 2.38 kHz,
@@ -119,7 +129,7 @@ passed since the last ID, the next transmission end triggers one anyway.
 | Station ID | The text to send. `DE CALLSIGN` placeholder — change it. |
 | Frequency | Entered in 100 Hz steps over whatever the firmware can tune. Defaults to 433.920. |
 | Preset | GMRS 1–7 and 15–22, plus 315.000, 432.300, 433.920, 446.000, 915.000. Shows `Custom` when the frequency is not one of them. |
-| Mode | MCW (FM) or OOK (CW). |
+| Mode | MCW (FM), CW (OOK), SSB (USB) or SSB (LSB). |
 | Deviation | 2.4 kHz (12.5 kHz channels) or 4.8 kHz (25 kHz channels). |
 | RX filter | 58 / 101 / 135 / 270 kHz. Narrower = better squelch. |
 | Tone | 400–1200 Hz. |
@@ -143,7 +153,8 @@ only ever shows rows that would change what the beacon does:
 
 | Hidden when | Rows |
 |---|---|
-| Mode is `OOK` | `Deviation`, `Tone`, `Preamble`, `Tail` — OOK keys the bare carrier, so there is no tone to pitch and no carrier for an unkeyed preamble to hold up |
+| Mode is `CW (OOK)` | `Deviation`, `Tone`, `Preamble`, `Tail` — CW keys the bare carrier, so there is no tone to pitch and no carrier for an unkeyed preamble to hold up |
+| Mode is `SSB` | `Deviation`, `Preamble`, `Tail` — bare carrier like CW, but `Tone` stays: it sets the carrier's offset from the dial, which is the received pitch |
 | Trigger is `Interval` | `Quiet time`, `Max ID gap`, `Courtesy` — the whole activity state machine is out of circuit |
 | Trigger is `On activity` | `Interval`, `Measure from` |
 | Remote is not `UART` | `UART baud` |

@@ -6,6 +6,8 @@
 typedef enum {
     CwModeMcw, // FM carrier with an audible tone keyed on/off - what an FM rig hears
     CwModeOok, // carrier keyed on/off - true CW, silent on an FM rig
+    CwModeSsbUsb, // OOK with the carrier tone_hz ABOVE the dial - USB rigs hear the tone
+    CwModeSsbLsb, // OOK with the carrier tone_hz BELOW the dial - LSB rigs hear the tone
     CwModeCount,
 } CwMode;
 
