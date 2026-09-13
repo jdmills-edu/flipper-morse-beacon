@@ -124,16 +124,12 @@ measured between:**
 | `Start of TX` (default) | Transmissions begin at fixed multiples of the period. The cadence is the period, exactly. |
 | `End of TX` | The period is the gap of dead air between one ID ending and the next starting. The cycle is then period + however long the ID takes. |
 
-`End of TX` was the original behaviour and is still the right choice if what you
-care about is guaranteeing a minimum quiet gap for other users. But it folds the
-length of every transmission into the cycle: measured on air with a 15 s interval
-and a 6.84 s ID, the cadence came out at 22.65 s (15 + 6.84 + ~0.8 s of retune
-and preset reload). For a fox that has to be found on a schedule, that is the
-wrong knob.
-
-`Start of TX` schedules against an absolute deadline and advances it by whole
-periods, so quantisation never accumulates — a 60 s interval stays on 60 s
-indefinitely rather than walking.
+`End of TX` guarantees a minimum quiet gap between IDs for other users of the
+channel, at the cost of a cycle that stretches by the length of each
+transmission — a 15 s interval with a 7 s ID repeats about every 22 s.
+`Start of TX` holds the cadence exactly, with no drift — a 60 s interval stays
+on 60 s indefinitely — which is what a fox that has to be found on a schedule
+needs.
 
 **If the identifier is longer than the interval** there is no honest way to keep
 transmissions one period apart without keying continuously. Whole slots are
