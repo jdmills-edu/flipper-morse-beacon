@@ -55,9 +55,14 @@ static uint32_t clamp_u32(uint32_t value, uint32_t min, uint32_t max) {
 void morse_config_validate(MorseConfig* config) {
     config->id_text[MORSE_MAX_TEXT] = '\0';
 
-    // Only reject what the radio genuinely cannot tune. No region policy here -
-    // the firmware decides what may be transmitted, not this app.
-    if(!cw_radio_frequency_supported(config->frequency)) config->frequency = 433920000;
+    /* Fall back to the default when the saved frequency is one the radio
+     * cannot tune, or one the firmware's region policy will not permit -
+     * a settings file can arrive from a different firmware or region. The
+     * region table is still the firmware's own; 433.92 is in every one. */
+    if(!cw_radio_frequency_supported(config->frequency) ||
+       !cw_radio_tx_allowed(config->frequency)) {
+        config->frequency = 433920000;
+    }
     if(config->mode >= CwModeCount) config->mode = CwModeMcw;
     if(config->deviation >= CwDeviationCount) config->deviation = CwDeviationNarrow;
     if(config->rx_bw >= CwRxBwCount) config->rx_bw = CwRxBw101;
