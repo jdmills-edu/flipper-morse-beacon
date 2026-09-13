@@ -8,19 +8,31 @@ A Flipper FAP that keys Morse code out of the CC1101. Two jobs:
 2. **Remote text** — send arbitrary text as Morse, typed on the Flipper, or
    pushed from a phone over BLE / a device wired to pins 13/14.
 
-Built against the **Unleashed unlshd-092 SDK, API 88.4**, which is the exact API
-version reported by the RogueMaster `RM0819-2255-b3dd8981` firmware on the
-device (`Oagyak`).
+Builds against the **official firmware SDK** and against the **Unleashed SDK**
+(which is what RogueMaster reports too). A FAP only loads on a firmware whose
+API version matches the SDK it was built with, so build against the SDK that
+matches what your Flipper is running.
 
 ## Build and install
 
 ```
 pipx install ufbt
+
+# Official firmware:
+ufbt update --channel=release
+
+# Unleashed / RogueMaster instead:
 ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
-cd ~/AI/flipper-morse
+
+cd flipper-morse
 ufbt              # build -> dist/morse_beacon.fap
 ufbt launch       # build, upload to /ext/apps/Sub-GHz/, and run
 ```
+
+Note that which frequencies the firmware will actually transmit on is firmware
+policy, not the app's: the official firmware enforces its region table, while
+custom firmwares are typically wider. The app asks the firmware before keying
+and reports a refusal in the log rather than working around it.
 
 ## How the signal is generated
 
@@ -199,10 +211,13 @@ the radio can be tuned at all:
 
     281-361, 378-481, 749-962 MHz
 
-which mirrors `furi_hal_subghz_is_frequency_valid()` in Unleashed/RogueMaster.
-Those builds carry no country table — `furi_hal_subghz_is_tx_allowed()` permits
-300-350, 387-467.75 and 779-928 MHz by default, widened to the full range above
-by the firmware's extended-range setting. If the firmware refuses a transmission
+which mirrors `furi_hal_subghz_is_frequency_valid()` — the hardware tuning
+span, identical across firmwares. Before keying, the app asks the firmware's
+own policy check (`furi_hal_region_is_frequency_allowed()`, present in both the
+official and Unleashed SDKs): the official firmware answers from its
+provisioned region table, while Unleashed/RogueMaster carry no country table
+and default to 300-350, 387-467.75 and 779-928 MHz, widened to the full range
+above by their extended-range setting. If the firmware refuses a transmission
 the reason is logged rather than silently swallowed.
 
 The check is duplicated here deliberately: `subghz_devices_is_frequency_valid()`
@@ -272,8 +287,9 @@ into the firmware build.
 
 ## Verified
 
-Builds clean against API 88.4, `APPCHK` matches the device, and the encoder was
-checked on the host against PARIS and ARRL Farnsworth timing.
+Builds clean against both the official SDK (API 87.1) and the Unleashed SDK
+(API 88.4), and the encoder was checked on the host against PARIS and ARRL
+Farnsworth timing.
 
 **Verified on air, 2026-09-08.** The Flipper keyed `DE CALLSIGN` on 433.920 MHz;
 an RTL-SDR on the far end of an `rtl_tcp` link recorded 13 s of IQ, which was

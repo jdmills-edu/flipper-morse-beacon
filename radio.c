@@ -264,7 +264,9 @@ bool cw_radio_frequency_supported(uint32_t frequency) {
 }
 
 bool cw_radio_tx_allowed(uint32_t frequency) {
-    return furi_hal_subghz_is_tx_allowed(frequency);
+    /* furi_hal_region_is_frequency_allowed() exists in both the official and
+     * the Unleashed SDK; furi_hal_subghz_is_tx_allowed() is Unleashed-only. */
+    return furi_hal_region_is_frequency_allowed(frequency);
 }
 
 bool cw_radio_frequency_valid(CwRadio* radio, uint32_t frequency) {

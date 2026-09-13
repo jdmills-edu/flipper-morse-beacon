@@ -880,12 +880,10 @@ static void setting_preset_changed(VariableItem* item) {
     uint8_t index = variable_item_get_current_value_index(item);
     app->config.frequency = freq_presets[index];
     variable_item_set_current_value_text(item, (char*)freq_preset_names[index]);
-    VariableItem* freq_item = variable_item_list_get(app->var_list, SettingFrequency);
-    if(freq_item) {
-        char buf[24];
-        morse_format_freq(buf, sizeof(buf), app->config.frequency);
-        variable_item_set_current_value_text(freq_item, buf);
-    }
+    /* The Frequency row needs its text refreshed too. variable_item_list_get()
+     * is an Unleashed extension, so rebuild the list instead - same deferred
+     * pattern as the mode change, and the rebuild keeps the selected row. */
+    view_dispatcher_send_custom_event(app->view_dispatcher, MorseEventSettingsDirty);
 }
 
 static void setting_rx_bw_changed(VariableItem* item) {
