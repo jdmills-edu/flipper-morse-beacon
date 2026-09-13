@@ -1,5 +1,9 @@
 # Morse Beacon — sub-GHz CW / MCW station ID for Flipper Zero
 
+![Morse Beacon](docs/banner.png)
+
+[![FAP build](https://github.com/jdmills-edu/flipper-morse-beacon/actions/workflows/build.yml/badge.svg)](https://github.com/jdmills-edu/flipper-morse-beacon/actions/workflows/build.yml)
+
 A Flipper FAP that keys Morse code out of the CC1101. Two jobs:
 
 1. **Beacon ID** — key your identifier automatically: either after the first
@@ -12,6 +16,27 @@ Builds against the **official firmware SDK** and against the **Unleashed SDK**
 (which is what RogueMaster reports too). A FAP only loads on a firmware whose
 API version matches the SDK it was built with, so build against the SDK that
 matches what your Flipper is running.
+
+## Screens
+
+Captured off the device over the RPC screen stream — these are real frames,
+not mockups.
+
+| Main menu | Beacon monitor |
+|---|---|
+| ![Main menu](docs/screenshots/menu.png) | ![Beacon monitor](docs/screenshots/beacon.png) |
+
+| Settings | Trigger and interval |
+|---|---|
+| ![Settings](docs/screenshots/settings.png) | ![Trigger settings](docs/screenshots/settings2.png) |
+
+| Remote text over BLE | Send text |
+|---|---|
+| ![Remote text](docs/screenshots/remote.png) | ![Send text](docs/screenshots/sendtext.png) |
+
+| Built-in manual |
+|---|
+| ![About](docs/screenshots/about.png) |
 
 ## Build and install
 

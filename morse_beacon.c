@@ -437,34 +437,23 @@ static void about_wrap(Canvas* canvas, AboutViewModel* model) {
     }
 }
 
-/* Draws one wrapped line, honouring "\eb" inline bold toggles.
- * FontPrimary is the only bold font and it is a different size, so emphasis at
- * body size is done by drawing the run twice one pixel apart - a double strike,
- * which thickens the strokes without changing the metrics. */
+/* Draws one wrapped line. "\eb" emphasis markers are stripped and NOT
+ * rendered: FontSecondary has one-pixel inter-glyph gaps, so a double-strike
+ * "bold" fills them and merges the letters into a smear. The emphasised terms
+ * all end in a colon, which carries the structure on its own. */
 static void about_draw_line(Canvas* canvas, uint8_t y, const char* s, uint16_t len) {
-    char buf[64];
+    char plain[64];
     size_t n = 0;
-    uint8_t x = 2;
-    bool bold = false;
 
-    for(uint16_t i = 0; i <= len; i++) {
-        bool marker = (i < len) && s[i] == '\e' && (i + 1) < len && s[i + 1] == 'b';
-        if(i == len || marker) {
-            if(n) {
-                buf[n] = '\0';
-                canvas_draw_str(canvas, x, y, buf);
-                if(bold) canvas_draw_str(canvas, x + 1, y, buf);
-                x += canvas_string_width(canvas, buf);
-                n = 0;
-            }
-            if(marker) {
-                bold = !bold;
-                i++; // step over the 'b'
-            }
+    for(uint16_t i = 0; i < len && n < sizeof(plain) - 1; i++) {
+        if(s[i] == '\e' && (i + 1) < len && s[i + 1] == 'b') {
+            i++; // step over the 'b'
             continue;
         }
-        if(n < sizeof(buf) - 1) buf[n++] = s[i];
+        plain[n++] = s[i];
     }
+    plain[n] = '\0';
+    canvas_draw_str(canvas, 2, y, plain);
 }
 
 static void about_view_draw(Canvas* canvas, void* model) {
