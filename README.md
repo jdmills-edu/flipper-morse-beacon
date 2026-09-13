@@ -346,4 +346,5 @@ silently keying continuously:
 beacon: ID longer than the interval, skipped 1 slot(s)
 ```
 
-The file grows without bound; delete it when it gets large.
+At 256 KB the file is rotated to `id_log.old.txt` (replacing the previous one),
+so the log never holds more than 512 KB total.
