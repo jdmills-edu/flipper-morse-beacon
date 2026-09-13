@@ -12,10 +12,9 @@ A Flipper FAP that keys Morse code out of the CC1101. Two jobs:
 2. **Remote text** — send arbitrary text as Morse, typed on the Flipper, or
    pushed from a phone over BLE / a device wired to pins 13/14.
 
-Builds against the **official firmware SDK** and against the **Unleashed SDK**
-(which is what RogueMaster reports too). A FAP only loads on a firmware whose
-API version matches the SDK it was built with, so build against the SDK that
-matches what your Flipper is running.
+Builds against the **official firmware SDK**, and against third-party firmware
+SDKs. A FAP only loads on a firmware whose API version matches the SDK it was
+built with, so build against the SDK that matches what your Flipper is running.
 
 ## On the air
 
@@ -53,8 +52,8 @@ pipx install ufbt
 # Official firmware:
 ufbt update --channel=release
 
-# Unleashed / RogueMaster instead:
-ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
+# Third-party firmware: point ufbt at the SDK index that firmware publishes
+ufbt update --index-url=<that firmware's directory.json> --channel=release
 
 cd flipper-morse
 ufbt              # build -> dist/morse_beacon.fap
@@ -243,12 +242,12 @@ the radio can be tuned at all:
 
 which mirrors `furi_hal_subghz_is_frequency_valid()` — the hardware tuning
 span, identical across firmwares. Before keying, the app asks the firmware's
-own policy check (`furi_hal_region_is_frequency_allowed()`, present in both the
-official and Unleashed SDKs): the official firmware answers from its
-provisioned region table, while Unleashed/RogueMaster carry no country table
-and default to 300-350, 387-467.75 and 779-928 MHz, widened to the full range
-above by their extended-range setting. If the firmware refuses a transmission
-the reason is logged rather than silently swallowed.
+own policy check (`furi_hal_region_is_frequency_allowed()`): the official
+firmware answers from its provisioned region table, while third-party
+firmwares typically answer with wider spans of their own. The app carries no
+policy of either kind — it mirrors whatever the running firmware permits, and
+if the firmware refuses a transmission the reason is logged rather than
+silently swallowed.
 
 The check is duplicated here deliberately: `subghz_devices_is_frequency_valid()`
 **cannot be used as a test** on the internal radio, because its implementation
