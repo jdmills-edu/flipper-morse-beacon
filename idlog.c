@@ -5,9 +5,8 @@
 #include <storage/storage.h>
 #include <stdarg.h>
 
-#define MORSE_LOG_DIR      EXT_PATH("apps_data/morse_beacon")
-#define MORSE_LOG_PATH     MORSE_LOG_DIR "/id_log.txt"
-#define MORSE_LOG_OLD_PATH MORSE_LOG_DIR "/id_log.old.txt"
+#define MORSE_LOG_PATH     APP_DATA_PATH("id_log.txt")
+#define MORSE_LOG_OLD_PATH APP_DATA_PATH("id_log.old.txt")
 
 /* An interval beacon writes around a megabyte of log a day, so the file must
  * not grow without bound. Rotating beats trimming here: dropping old lines in
@@ -16,7 +15,6 @@
 
 void morse_log(const char* format, ...) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
-    storage_common_mkdir(storage, MORSE_LOG_DIR);
 
     FileInfo info;
     if(storage_common_stat(storage, MORSE_LOG_PATH, &info) == FSE_OK &&

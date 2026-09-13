@@ -5,8 +5,10 @@
 #include <toolbox/saved_struct.h>
 #include <string.h>
 
-#define MORSE_CONFIG_DIR  EXT_PATH("apps_data/morse_beacon")
-#define MORSE_CONFIG_PATH MORSE_CONFIG_DIR "/beacon.conf"
+/* The /data prefix resolves to this app's own data directory
+ * (/ext/apps_data/morse_beacon), created by the storage service on first
+ * use - the catalog-sanctioned place for an app to keep its files. */
+#define MORSE_CONFIG_PATH APP_DATA_PATH("beacon.conf")
 
 void morse_config_set_defaults(MorseConfig* config) {
     memset(config, 0, sizeof(MorseConfig));
@@ -128,10 +130,6 @@ void morse_config_load(MorseConfig* config) {
 }
 
 void morse_config_save(const MorseConfig* config) {
-    Storage* storage = furi_record_open(RECORD_STORAGE);
-    storage_common_mkdir(storage, MORSE_CONFIG_DIR);
-    furi_record_close(RECORD_STORAGE);
-
     saved_struct_save(
         MORSE_CONFIG_PATH,
         (void*)config,
