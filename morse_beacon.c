@@ -121,6 +121,11 @@ typedef struct {
 
     Submenu* submenu;
     VariableItemList* var_list;
+    /* Presets the running firmware will actually transmit on - indices into
+     * freq_presets, rebuilt with the settings list. Region-blocked presets
+     * are not shown at all. Sized by the static assert next to the table. */
+    uint8_t preset_map[24];
+    uint8_t preset_count;
     TextInput* text_input;
     NumberInput* number_input;
     View* about_view;
@@ -201,6 +206,7 @@ static const char* const freq_preset_names[] = {
     "915.000",
 };
 #define FREQ_PRESET_COUNT COUNT_OF(freq_presets)
+_Static_assert(COUNT_OF(freq_presets) <= 24, "preset_map in MorseApp is too small");
 
 static const char* const mode_names[] = {"MCW (FM)", "CW (OOK)", "SSB (USB)", "SSB (LSB)"};
 static const char* const deviation_names[] = {"2.4 kHz", "4.8 kHz"};
@@ -867,8 +873,10 @@ static void setting_deviation_changed(VariableItem* item) {
 static void setting_preset_changed(VariableItem* item) {
     MorseApp* app = variable_item_get_context(item);
     uint8_t index = variable_item_get_current_value_index(item);
-    app->config.frequency = freq_presets[index];
-    variable_item_set_current_value_text(item, (char*)freq_preset_names[index]);
+    if(index >= app->preset_count) return;
+    uint8_t p = app->preset_map[index];
+    app->config.frequency = freq_presets[p];
+    variable_item_set_current_value_text(item, (char*)freq_preset_names[p]);
     /* The Frequency row needs its text refreshed too. variable_item_list_get()
      * is an Unleashed extension, so rebuild the list instead - same deferred
      * pattern as the mode change, and the rebuild keeps the selected row. */
@@ -1111,18 +1119,31 @@ static void settings_rebuild(MorseApp* app) {
     morse_format_freq(buf, sizeof(buf), app->config.frequency);
     variable_item_set_current_value_text(item, buf);
 
+    /* Offer only presets the running firmware will transmit on: what is
+     * permitted differs by firmware build and provisioned region, and a
+     * preset that can only ever be refused is noise. */
+    app->preset_count = 0;
     uint8_t preset_index = 0;
     bool preset_match = false;
     for(uint8_t i = 0; i < FREQ_PRESET_COUNT; i++) {
+        if(!cw_radio_frequency_supported(freq_presets[i]) ||
+           !cw_radio_tx_allowed(freq_presets[i])) {
+            continue;
+        }
         if(freq_presets[i] == app->config.frequency) {
-            preset_index = i;
+            preset_index = app->preset_count;
             preset_match = true;
         }
+        app->preset_map[app->preset_count++] = i;
     }
-    item = settings_add(app, SettingPreset, "Preset", FREQ_PRESET_COUNT, setting_preset_changed);
-    variable_item_set_current_value_index(item, preset_index);
-    variable_item_set_current_value_text(
-        item, preset_match ? (char*)freq_preset_names[preset_index] : "Custom");
+    if(app->preset_count > 0) {
+        item = settings_add(
+            app, SettingPreset, "Preset", app->preset_count, setting_preset_changed);
+        variable_item_set_current_value_index(item, preset_index);
+        variable_item_set_current_value_text(
+            item,
+            preset_match ? (char*)freq_preset_names[app->preset_map[preset_index]] : "Custom");
+    }
 
     item = settings_add(app, SettingMode, "Mode", CwModeCount, setting_mode_changed);
     variable_item_set_current_value_index(item, app->config.mode);

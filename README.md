@@ -69,9 +69,9 @@ and reports a refusal in the log rather than working around it.
 ## How the signal is generated
 
 Keying the carrier on and off — real CW — is silent on an FM receiver: the
-squelch opens and closes, nothing else. For a GMRS or ham FM radio to hear a
-tone, the tone has to ride on the carrier as modulation. The four modes cover
-both cases.
+squelch opens and closes, nothing else. For an FM radio to hear a tone, the
+tone has to ride on the carrier as modulation. The four modes cover both
+cases.
 
 **MCW (default).** The CC1101 is put in 2-FSK with the deviation set to ±2.38 kHz
 (narrowband) or ±4.76 kHz (wideband), and the async-TX data line is square-waved
@@ -170,7 +170,7 @@ passed since the last ID, the next transmission end triggers one anyway.
 |---|---|
 | Station ID | The text to send. `DE CALLSIGN` placeholder — change it. |
 | Frequency | Entered in 100 Hz steps over whatever the firmware can tune. Defaults to 433.920. |
-| Preset | GMRS 1–7 and 15–22, plus 315.000, 432.300, 433.920, 446.000, 915.000. Shows `Custom` when the frequency is not one of them. |
+| Preset | Quick picks, filtered to frequencies the firmware's region policy permits. Shows `Custom` when the frequency is not one of them. |
 | Mode | MCW (FM), CW (OOK), SSB (USB) or SSB (LSB). |
 | Deviation | 2.4 kHz (12.5 kHz channels) or 4.8 kHz (25 kHz channels). |
 | RX filter | 58 / 101 / 135 / 270 kHz. Narrower = better squelch. |
@@ -257,46 +257,29 @@ Asking it about a frequency in one of the gaps reboots the device.
 
 ## Frequency presets
 
-GMRS **15–22** (462.5500–462.7250) are the main high-power channels and the
-repeater outputs RP15–RP22 — where a repeater's own ID is transmitted, which is
-what this app was originally for. GMRS **1–7** (462.5625–462.7125) are the
-interstitial simplex channels.
-
-Outside GMRS:
-
-| Preset | What it is |
-|---|---|
-| 315.000 | US ISM, a common Part 15 remote frequency. Bench testing. |
-| 432.300 | Start of the 70 cm propagation-beacon subband (432.300–432.400, ARRL plan) — the one segment on 70 cm actually set aside for beacons. |
-| 433.920 | ISM, and the frequency the Flipper's antenna is matched for. Busy with Part 15 traffic. |
-| 446.000 | 70 cm national FM simplex **calling** frequency. A landmark for finding your way around the band — not somewhere to park a beacon. |
-| 915.000 | US ISM centre. Bench testing. |
+The available presets follow the firmware's region settings: the Preset row
+shows only frequencies the running firmware's region policy will transmit on,
+so the list varies by firmware build and provisioned region. Any tunable
+frequency can still be entered directly in the Frequency row.
 
 Band plans are voluntary and regional; coordinate locally before running a fox.
 
-Channels **8–14** are deliberately absent: they sit at 467.5625–467.7125 MHz,
-outside the band the CC1101 is rated for. The 467 MHz repeater *inputs* are
-missing for the same reason, so this cannot key a repeater through its input —
-only transmit on its output.
-
 ## Limits
 
-- The CC1101 is rated **300-348, 387-464 and 779-928 MHz**. Unleashed raises the
-  default TX ceiling to 467.75 MHz, so GMRS repeater *inputs* at 467 MHz are
-  within what the firmware allows — but they are outside the chip's rated band
-  and the Flipper's RF matching is tuned for 433, so output power and spurious
-  performance there are unspecified.
-- Output is roughly **10 mW** into an antenna that is matched for 433 MHz, so
-  462 MHz range is short.
+- The CC1101 is rated **300-348, 387-464 and 779-928 MHz**. Some firmwares
+  permit transmitting slightly beyond those bands; there the chip is out of
+  spec and output power and spurious performance are unspecified.
+- Output is roughly **10 mW** into an antenna that is matched for 433 MHz;
+  range falls off the further the frequency sits from it.
 - There is **no CTCSS/DCS**. Binary FSK can only sit on one of two frequencies at
   a time, so a sub-audible tone cannot be summed with the audio tone. Generating
   arbitrary audio would need duty-cycle dithering at ~100 kHz in the TX ISR —
   possible in principle, not implemented.
 - `Send text` and `Remote text` key immediately without checking whether the
   channel is busy. Only the beacon mode listens first.
-- A Flipper is not FCC type-accepted for Part 95 (GMRS). Under Part 97, a
-  licensed amateur may use homebrew equipment. Transmit only where you are
-  licensed to.
+- A Flipper is not type-accepted for radio services that require certified
+  equipment. Under US Part 97, a licensed amateur may use homebrew gear.
+  Transmit only where you are licensed to.
 
 ## Layout
 
