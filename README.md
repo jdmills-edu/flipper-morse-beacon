@@ -17,6 +17,13 @@ Builds against the **official firmware SDK** and against the **Unleashed SDK**
 API version matches the SDK it was built with, so build against the SDK that
 matches what your Flipper is running.
 
+## On the air
+
+The beacon keying its ID on 433.924 MHz, received on an RTL-SDR in SDR++
+([webm](docs/sdr.webm)):
+
+![Beacon received in SDR++](docs/sdr.gif)
+
 ## Screens
 
 Captured off the device over the RPC screen stream — these are real frames,
@@ -54,22 +61,24 @@ ufbt              # build -> dist/morse_beacon.fap
 ufbt launch       # build, upload to /ext/apps/Sub-GHz/, and run
 ```
 
-Note that which frequencies the firmware will actually transmit on is firmware
+Which frequencies the firmware will actually transmit on is firmware
 policy, not the app's: the official firmware enforces its region table, while
 custom firmwares are typically wider. The app asks the firmware before keying
 and reports a refusal in the log rather than working around it.
 
 ## How the signal is generated
 
-This is the part that matters, because "Morse on sub-GHz" has two very different
-meanings and only one of them is audible on a GMRS or ham FM radio.
+Keying the carrier on and off — real CW — is silent on an FM receiver: the
+squelch opens and closes, nothing else. For a GMRS or ham FM radio to hear a
+tone, the tone has to ride on the carrier as modulation. The four modes cover
+both cases.
 
 **MCW (default).** The CC1101 is put in 2-FSK with the deviation set to ±2.38 kHz
 (narrowband) or ±4.76 kHz (wideband), and the async-TX data line is square-waved
 between the two tones at audio rate — 800 Hz by default. An FM discriminator
 turns that back into an 800 Hz tone. During the spaces between dits and dahs the
-line is held at one tone, so the carrier stays up and the audio simply goes
-quiet — which is exactly what a hardware repeater's ID sounds like.
+line is held at one tone, so the carrier stays up and the audio goes quiet —
+the same sound a hardware repeater's ID makes.
 
 **CW (OOK).** The carrier itself is keyed on and off. This is real CW, and it is
 what you want if something is listening with an AM/CW detector or a BFO — but on
@@ -77,7 +86,7 @@ an FM receiver it just opens and closes the squelch, with no tone.
 
 **SSB (USB / LSB).** The same bare-carrier keying, but the carrier is offset
 from the dial frequency by the Tone setting — above the dial for USB, below for
-LSB. That is exactly how a real rig sends CW into an SSB passband: a receiver
+LSB. This is how a rig keys CW into an SSB passband: a receiver
 sitting on the dial frequency in the matching sideband hears the beat note at
 the tone pitch. The CC1101 synthesizer steps in ~397 Hz increments
 (26 MHz / 2¹⁶), so the actual pitch lands on the nearest step — an 800 Hz
@@ -274,7 +283,7 @@ outside the band the CC1101 is rated for. The 467 MHz repeater *inputs* are
 missing for the same reason, so this cannot key a repeater through its input —
 only transmit on its output.
 
-## Limits worth knowing
+## Limits
 
 - The CC1101 is rated **300-348, 387-464 and 779-928 MHz**. Unleashed raises the
   default TX ceiling to 467.75 MHz, so GMRS repeater *inputs* at 467 MHz are
